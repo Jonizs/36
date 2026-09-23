@@ -34,7 +34,7 @@
       <p class="sub">Running · Push-ups · Weight</p>
     </div>
     <div class="top-actions">
-      <button id="export-btn" class="btn ghost" type="button" title="Download an updated data.js with everything logged in this browser">⤓ <span class="lbl">Export</span></button>
+      <button id="sync-btn" class="btn ghost sync" type="button" data-state="off"><span class="sync-ico" aria-hidden="true">☁︎</span><span class="sync-dot" aria-hidden="true"></span><span class="lbl">Autosave</span></button>
       <button id="theme-btn" class="btn ghost icon" type="button" aria-label="Toggle theme">◐</button>
     </div>
   </header>
@@ -83,7 +83,13 @@
     <section class="card">
       <div class="card-head">
         <h2><span class="dot push"></span>Weekly push-ups</h2>
-        <span class="muted small" id="push-caption"></span>
+        <div class="head-right">
+          <div class="legend" id="push-legend" hidden>
+            <span><i class="lg-sq push"></i>Full</span>
+            <span><i class="lg-sq knee"></i>Knee</span>
+          </div>
+          <span class="muted small" id="push-caption"></span>
+        </div>
       </div>
       <div class="chart" id="push-chart"></div>
       <div class="records" id="push-records"></div>
@@ -130,7 +136,7 @@
     </section>
 
     <footer class="foot">
-      <span>Entries marked <span class="pill local">this browser</span> live only here. Use <strong>Export data.js</strong> and commit the file to keep them.</span>
+      <span>Turn on <strong>Autosave</strong> (top right) to save every entry to GitHub automatically.</span>
       <a href="?demo">See demo data</a>
     </footer>
   </main>
@@ -150,6 +156,7 @@
       </div>
 
       <label class="field"><span>Date</span><input type="date" name="date" required></label>
+      <div class="hint date-hint" id="date-hint"></div>
 
       <div class="pane" data-pane="run">
         <div class="row2">
@@ -160,6 +167,10 @@
       </div>
 
       <div class="pane" data-pane="push" hidden>
+        <div class="seg wide two" id="push-type" role="radiogroup" aria-label="Push-up type">
+          <button type="button" data-k="full" aria-selected="true">Full push-ups</button>
+          <button type="button" data-k="knee" aria-selected="false">Knee push-ups</button>
+        </div>
         <div class="row2">
           <label class="field"><span>Total reps</span><input type="number" name="reps" min="1" step="1" inputmode="numeric" placeholder="60"></label>
           <label class="field"><span>Sets (optional)</span><input type="text" name="sets" placeholder="20, 20, 20"></label>
@@ -178,6 +189,34 @@
         <button class="btn ghost" value="cancel" formnovalidate>Cancel</button>
         <button class="btn primary" id="save-btn" value="save">Save</button>
       </div>
+    </form>
+  </dialog>
+
+  <dialog id="gh-dialog" class="dialog">
+    <form method="dialog" id="gh-form">
+      <div class="dialog-head">
+        <h3>Autosave to GitHub</h3>
+        <button class="btn ghost icon" value="cancel" aria-label="Close" formnovalidate>✕</button>
+      </div>
+      <p class="dlg-text">Everything you add or delete is saved straight into <code>data.js</code> in your repo, so it shows on the site and on every device. Set this up once on each phone or computer.</p>
+      <ol class="steps">
+        <li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → New fine-grained token</a>.</li>
+        <li>Under <b>Repository access</b>, choose <b>Only select repositories</b> and pick your <b>36</b> repo.</li>
+        <li>Under <b>Permissions → Repository permissions</b>, set <b>Contents</b> to <b>Read and write</b>.</li>
+        <li>Generate the token and paste it below.</li>
+      </ol>
+      <div class="row2">
+        <label class="field"><span>Repository</span><input name="repo" placeholder="username/36" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+        <label class="field"><span>Branch</span><input name="branch" placeholder="main" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+      </div>
+      <label class="field"><span>Token</span><input name="token" type="password" placeholder="github_pat_…" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <p class="hint">The token is kept only in this browser. It can only touch the one repo you picked.</p>
+      <div class="form-error gh-status" id="gh-status" role="status"></div>
+      <div class="dialog-actions">
+        <button class="btn ghost" type="button" id="gh-disconnect" hidden>Disconnect</button>
+        <button class="btn primary" value="connect">Connect &amp; save</button>
+      </div>
+      <button class="linkish" type="button" id="export-btn">Or download data.js manually</button>
     </form>
   </dialog>
 

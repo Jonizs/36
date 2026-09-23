@@ -3,6 +3,7 @@
 //
 //  • runs:    one entry per run. `time` is "mm:ss" or "h:mm:ss" (optional).
 //  • pushups: one entry per session (several a day are summed). `sets` optional.
+//             Add type: "knee" for knee push-ups (anything else counts as full).
 //  • weights: one entry per day, in kg.
 //  • Dates are "YYYY-MM-DD". Order doesn't matter.
 //
@@ -25,6 +26,7 @@ window.JOURNEY = {
 
   pushups: [
     // { date: "2026-09-22", reps: 60, sets: [20, 20, 20], note: "Morning" },
+    // { date: "2026-09-22", reps: 30, type: "knee", sets: [15, 15] },
   ],
 
   weights: [

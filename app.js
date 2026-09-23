@@ -42,11 +42,14 @@
     get(k, fallback) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } },
   };
-  const emptyLocal = () => ({ runs: [], pushups: [], weights: [] });
+  const emptyLocal = () => ({ runs: [], pushups: [], weights: [], dels: { runs: [], pushups: [], weights: [] } });
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
   const isDemo = new URLSearchParams(location.search).has("demo");
-  const baseConfig = isDemo ? makeDemo() : (window.JOURNEY || {});
+  let baseConfig = isDemo ? makeDemo() : (window.JOURNEY || {});
+  // `local` = changes made in this browser not yet in data.js: added entries + deleted file entries
   let local = isDemo ? emptyLocal() : { ...emptyLocal(), ...store.get(LS_KEY, {}) };
+  local.dels = { ...emptyLocal().dels, ...(local.dels || {}) };
 
   // ───────── Build the model ─────────
   let M; // current model
@@ -58,24 +61,27 @@
     const today = todayDay();
     const weekOf = (d) => Math.floor((d - start) / 7);
 
-    const tag = (arr, src) => (arr || []).filter((e) => e && e.date).map((e, i) => ({ ...e, src, idx: i, day: toDay(e.date) }));
+    const tag = (arr, src, key) => (arr || [])
+      .map((e, i) => ({ e, i }))
+      .filter(({ e }) => e && e.date && !(src === "file" && local.dels[key].some((d) => same(d, e))))
+      .map(({ e, i }) => ({ ...e, src, idx: i, day: toDay(e.date) }));
 
-    const runs = [...tag(cfg.runs, "file"), ...tag(local.runs, "local")]
+    let runs = [...tag(cfg.runs, "file", "runs"), ...tag(local.runs, "local", "runs")]
       .map((r) => ({ ...r, km: Number(r.km) || 0, sec: parseTime(r.time) }))
       .filter((r) => r.km > 0)
       .sort((a, b) => a.day - b.day);
 
-    const pushups = [...tag(cfg.pushups, "file"), ...tag(local.pushups, "local")]
+    let pushups = [...tag(cfg.pushups, "file", "pushups"), ...tag(local.pushups, "local", "pushups")]
       .map((p) => {
         const sets = Array.isArray(p.sets) ? p.sets.map(Number).filter((n) => n > 0) : parseSets(p.sets);
-        return { ...p, sets, reps: Number(p.reps) || sum(sets) };
+        return { ...p, sets, reps: Number(p.reps) || sum(sets), knee: p.type === "knee" };
       })
       .filter((p) => p.reps > 0)
       .sort((a, b) => a.day - b.day);
 
     // weights: one per day, browser entries override the file
     const wmap = new Map();
-    for (const w of [...tag(cfg.weights, "file"), ...tag(local.weights, "local")]) {
+    for (const w of [...tag(cfg.weights, "file", "weights"), ...tag(local.weights, "local", "weights")]) {
       const kg = Number(w.kg);
       if (kg > 0) wmap.set(w.day, { ...w, kg });
     }
@@ -87,23 +93,32 @@
 
     // weekly buckets
     const W = Array.from({ length: weeks }, (_, i) => ({
-      i, start: start + i * 7, end: start + i * 7 + 6, km: 0, runs: 0, sec: 0, timedKm: 0, reps: 0, pushDays: new Set(), kgs: [],
+      i, start: start + i * 7, end: start + i * 7 + 6, km: 0, runs: 0, sec: 0, timedKm: 0, reps: 0, knee: 0, pushDays: new Set(), kgs: [],
     }));
     for (const r of runs) {
       const w = W[weekOf(r.day)]; if (!w) continue;
       w.km += r.km; w.runs++; if (r.sec) { w.sec += r.sec; w.timedKm += r.km; }
     }
-    for (const p of pushups) { const w = W[weekOf(p.day)]; if (!w) continue; w.reps += p.reps; w.pushDays.add(p.day); }
+    for (const p of pushups) { const w = W[weekOf(p.day)]; if (!w) continue; w.reps += p.reps; if (p.knee) w.knee += p.reps; w.pushDays.add(p.day); }
     for (const x of weights) { const w = W[weekOf(x.day)]; if (w) w.kgs.push(x.kg); }
 
     const status = today < start ? "pre" : today > end ? "done" : "active";
     const curIdx = status === "pre" ? -1 : status === "done" ? weeks : weekOf(today);
 
     // push-ups per day
-    const pushByDay = new Map();
-    for (const p of pushups) pushByDay.set(p.day, (pushByDay.get(p.day) || 0) + p.reps);
+    // stats only count what happened inside the journey; the log still shows everything
+    const inJourney = (e) => e.day >= start && e.day <= end;
+    const allRuns = runs, allPushups = pushups;
+    runs = runs.filter(inJourney); pushups = pushups.filter(inJourney);
 
-    return { cfg, weeks, start, end, today, status, curIdx, weekOf, runs, pushups, weights, W, pushByDay };
+    const pushByDay = new Map();
+    const kneeByDay = new Map();
+    for (const p of pushups) {
+      pushByDay.set(p.day, (pushByDay.get(p.day) || 0) + p.reps);
+      if (p.knee) kneeByDay.set(p.day, (kneeByDay.get(p.day) || 0) + p.reps);
+    }
+
+    return { cfg, weeks, start, end, today, status, curIdx, weekOf, runs, pushups, allRuns, allPushups, weights, W, pushByDay, kneeByDay };
   }
 
   // ───────── Render: hero ─────────
@@ -150,6 +165,7 @@
     const timed = runs.filter((r) => r.sec);
     const avgPace = timed.length ? sum(timed, (r) => r.sec) / sum(timed, (r) => r.km) : null;
     const totalReps = sum(pushups, (p) => p.reps);
+    const kneeReps = sum(pushups.filter((p) => p.knee), (p) => p.reps);
     const elapsedWeeks = clamp(curIdx + 1, 1, M.weeks);
     const cur = W[curIdx], prev = W[curIdx - 1];
 
@@ -172,7 +188,7 @@
         note: cur ? `${delta(cur.km, prev ? prev.km : null, " km")} ${prev ? "vs last wk" : `${fmtKm(cur.km)} km this week`}` : `${fmtKm(totalKm / elapsedWeeks)} km / week avg` },
       { label: "🏃 Runs", value: `${runs.length}`, note: `${fmtNum(runs.length / elapsedWeeks, 1)} per week avg` },
       { label: "⏱ Avg pace", value: avgPace ? `${fmtPace(avgPace)}<small>/km</small>` : "–", note: timed.length ? `${fmtDur(sum(timed, (r) => r.sec))} total time` : "Add a time to see pace" },
-      { label: "💪 Push-ups", value: fmtNum(totalReps), note: cur ? `${delta(cur.reps, prev ? prev.reps : null, "", 0)} ${prev ? "vs last wk" : `${fmtNum(cur.reps)} this week`}` : "" },
+      { label: "💪 Push-ups", value: fmtNum(totalReps), note: kneeReps ? `${fmtNum(totalReps - kneeReps)} full · ${fmtNum(kneeReps)} knee` : cur ? `${delta(cur.reps, prev ? prev.reps : null, "", 0)} ${prev ? "vs last wk" : `${fmtNum(cur.reps)} this week`}` : "" },
       { label: "🔥 Push-up streak", value: `${streak}<small>${streak === 1 ? "day" : "days"}</small>`, note: pushByDay.size ? `${pushByDay.size} active days total` : "Log a set to start" },
       { label: "⚖️ Weight", value: wLast ? `${fmtNum(wLast.kg, 1)}<small>kg</small>` : "–",
         note: wLast ? (weights.length > 1 ? `${delta(wLast.kg, wFirst.kg, " kg", 1, true)} overall` : "First weigh-in") + (goal ? ` · ${fmtNum(Math.abs(wLast.kg - goal), 1)} to go` : "") : "Log your weight" },
@@ -183,13 +199,14 @@
 
   // ───────── Render: this week ─────────
   function renderWeek() {
-    const { W, curIdx, weeks, today, runs, weights, pushByDay } = M;
+    const { W, curIdx, weeks, today, runs, weights, pushByDay, kneeByDay } = M;
     const idx = clamp(curIdx, 0, weeks - 1);
     const w = W[idx], prev = W[idx - 1];
     const days = [];
     for (let d = w.start; d <= w.end; d++) {
       const dr = runs.filter((r) => r.day === d);
-      const reps = pushByDay.get(d);
+      const knee = kneeByDay.get(d) || 0;
+      const reps = (pushByDay.get(d) || 0) - knee;
       const kg = weights.find((x) => x.day === d);
       const cls = ["day", d === today ? "today" : "", d > today ? "future" : ""].join(" ");
       days.push(`<div class="${cls}">
@@ -197,6 +214,7 @@
         <span class="dd">${fmt(d, { day: "numeric" })}</span>
         ${dr.map((r) => `<span class="chip run" title="${esc(r.note || "")}">${fmtKm(r.km)}<span class="u"> km</span></span>`).join("")}
         ${reps ? `<span class="chip push">${fmtNum(reps)}<span class="u"> reps</span></span>` : ""}
+        ${knee ? `<span class="chip knee" title="Knee push-ups">${fmtNum(knee)}<span class="u"> knee</span></span>` : ""}
         ${kg ? `<span class="chip weight">${fmtNum(kg.kg, 1)}<span class="u"> kg</span></span>` : ""}
       </div>`);
     }
@@ -207,7 +225,7 @@
     document.getElementById("week-totals").innerHTML = [
       `<span><i class="dot run"></i> <b>${fmtKm(w.km)}</b> km${prev ? cmp(w.km, prev.km, 1) : ""}</span>`,
       `<span><b>${w.runs}</b> ${w.runs === 1 ? "run" : "runs"}</span>`,
-      `<span><i class="dot push"></i> <b>${fmtNum(w.reps)}</b> push-ups${prev ? cmp(w.reps, prev.reps) : ""}</span>`,
+      `<span><i class="dot push"></i> <b>${fmtNum(w.reps)}</b> push-ups${w.knee ? ` <span class="muted">(<i class="dot knee"></i> ${fmtNum(w.knee)} knee)</span>` : ""}${prev ? cmp(w.reps, prev.reps) : ""}</span>`,
       avgKg ? `<span><i class="dot weight"></i> <b>${fmtNum(avgKg, 1)}</b> kg avg${prevKg ? ` <span class="${avgKg <= prevKg ? "up" : "down"}">${avgKg <= prevKg ? "▼" : "▲"}${fmtNum(Math.abs(avgKg - prevKg), 1)}</span>` : ""}</span>` : "",
     ].join("");
   }
@@ -241,7 +259,7 @@
   };
 
   // Weekly bar chart (distance or push-ups)
-  function barChart(el, { value, color, target, unit, fmtV, tipExtra, emptyMsg }) {
+  function barChart(el, { value, color, top, topColor, target, unit, fmtV, tipExtra, emptyMsg }) {
     const { W, curIdx } = M;
     const hasData = W.some((w) => value(w) > 0);
     if (!hasData) { el.innerHTML = `<div class="empty">${emptyMsg}</div>`; return; }
@@ -264,7 +282,14 @@
       const v = value(w), x = m.l + i * band + gap / 2;
       if (v > 0) {
         const op = i === curIdx ? 1 : i > curIdx ? 0.35 : 0.72;
-        bars += `<path d="${barPath(x, y(v), bw, y(0) - y(v))}" fill="${color}" opacity="${op}"/>`;
+        const t = top ? top(w) : 0, base = v - t;
+        if (!t) bars += `<path d="${barPath(x, y(v), bw, y(0) - y(v))}" fill="${color}" opacity="${op}"/>`;
+        else {
+          // stacked: base segment square-topped, top segment rounded, 2px surface gap between
+          const gapPx = base > 0 ? 2 : 0, th = y(base) - y(v) - gapPx;
+          if (base > 0) bars += `<rect x="${x}" y="${y(base)}" width="${bw}" height="${y(0) - y(base)}" fill="${color}" opacity="${op}"/>`;
+          if (th > 0.5) bars += `<path d="${barPath(x, y(v), bw, th, base > 0 ? 3 : 4)}" fill="${topColor}" opacity="${op}"/>`;
+        }
       }
       if (i === curIdx) bars += `<circle cx="${x + bw / 2}" cy="${y(0) + 8}" r="2.5" fill="var(--text)"/>`;
       if ((i + 1) % labelEvery === 0 || i === 0) labels += `<text x="${x + bw / 2}" y="${height - 6}" text-anchor="middle">${i + 1}</text>`;
@@ -316,17 +341,20 @@
     const { pushups, W, curIdx, pushByDay } = M;
     const target = Number(M.cfg.weeklyGoalPushups) || null;
     barChart(document.getElementById("push-chart"), {
-      value: (w) => w.reps, color: "var(--push)", target, unit: "push-ups", fmtV: (v) => fmtNum(v),
-      tipExtra: (w) => ` · ${w.pushDays.size} ${w.pushDays.size === 1 ? "day" : "days"}`,
+      value: (w) => w.reps, color: "var(--push)", top: (w) => w.knee, topColor: "var(--knee)",
+      target, unit: "push-ups", fmtV: (v) => fmtNum(v),
+      tipExtra: (w) => ` · ${w.pushDays.size} ${w.pushDays.size === 1 ? "day" : "days"}${w.knee ? `<br>${fmtNum(w.reps - w.knee)} full · ${fmtNum(w.knee)} knee` : ""}`,
       emptyMsg: "No push-ups yet. Tap <b>+</b> → Push-ups to log a set.",
     });
     const elapsed = W.slice(0, clamp(curIdx + 1, 1, M.weeks));
+    document.getElementById("push-legend").hidden = !pushups.some((p) => p.knee);
     document.getElementById("push-caption").textContent = pushups.length ? `Avg ${fmtNum(sum(elapsed, (w) => w.reps) / elapsed.length)} / week` : "";
 
     let bestDay = null;
     for (const [d, r] of pushByDay) if (!bestDay || r > bestDay.r) bestDay = { d, r };
     let bestSet = null;
-    for (const p of pushups) for (const s of p.sets) if (!bestSet || s > bestSet.s) bestSet = { s, d: p.day };
+    const hasFull = pushups.some((p) => !p.knee && p.sets.length);
+    for (const p of pushups) if (p.knee !== hasFull) for (const s of p.sets) if (!bestSet || s > bestSet.s) bestSet = { s, d: p.day, knee: p.knee };
     const bestWeek = W.reduce((a, w) => (w.reps > (a ? a.reps : 0) ? w : a), null);
     // longest day streak ever
     const days = [...pushByDay.keys()].sort((a, b) => a - b);
@@ -334,7 +362,7 @@
     days.forEach((d, i) => { run = i && d === days[i - 1] + 1 ? run + 1 : 1; longest = Math.max(longest, run); });
     recs("push-records", [
       ["Best day", bestDay ? fmtNum(bestDay.r) : "–", bestDay ? fmtLong(bestDay.d) : ""],
-      ["Biggest set", bestSet ? fmtNum(bestSet.s) : "–", bestSet ? fmtLong(bestSet.d) : "Log sets to track"],
+      ["Biggest set", bestSet ? `${fmtNum(bestSet.s)}${bestSet.knee ? " knee" : ""}` : "–", bestSet ? fmtLong(bestSet.d) : "Log sets to track"],
       ["Longest streak", longest ? `${longest} ${longest === 1 ? "day" : "days"}` : "–", ""],
       ["Biggest week", bestWeek ? fmtNum(bestWeek.reps) : "–", bestWeek ? `Week ${bestWeek.i + 1}` : ""],
     ]);
@@ -431,7 +459,7 @@
     const c = e.target.closest(".cell"); if (!c) return hideTip();
     const w = M.W[+c.dataset.i];
     const kg = w.kgs.length ? `<br>Avg weight ${fmtNum(sum(w.kgs) / w.kgs.length, 1)} kg` : "";
-    showTip(`<b>Week ${w.i + 1}</b>${w.i === M.curIdx ? " · this week" : ""}<br>${fmtRange(w.start, w.end)}<br>🏃 ${fmtKm(w.km)} km · ${w.runs} ${w.runs === 1 ? "run" : "runs"}<br>💪 ${fmtNum(w.reps)} push-ups${kg}`, e.clientX, e.clientY);
+    showTip(`<b>Week ${w.i + 1}</b>${w.i === M.curIdx ? " · this week" : ""}<br>${fmtRange(w.start, w.end)}<br>🏃 ${fmtKm(w.km)} km · ${w.runs} ${w.runs === 1 ? "run" : "runs"}<br>💪 ${fmtNum(w.reps)} push-ups${w.knee ? ` (${fmtNum(w.knee)} knee)` : ""}${kg}`, e.clientX, e.clientY);
   };
   mapEl.addEventListener("pointermove", mapTip);
   mapEl.addEventListener("pointerdown", mapTip);
@@ -445,8 +473,8 @@
   let logFilter = "all", logLimit = 25;
   function renderLog() {
     const items = [
-      ...M.runs.map((r) => ({ kind: "run", e: r, day: r.day, title: `${fmtKm(r.km)} km run`, sub: [r.sec ? `${fmtDur(r.sec)} · ${fmtPace(r.sec / r.km)}/km` : "", r.note].filter(Boolean).join(" · ") })),
-      ...M.pushups.map((p) => ({ kind: "push", e: p, day: p.day, title: `${fmtNum(p.reps)} push-ups`, sub: [p.sets.length ? `Sets ${p.sets.join(" · ")}` : "", p.note].filter(Boolean).join(" · ") })),
+      ...M.allRuns.map((r) => ({ kind: "run", e: r, day: r.day, title: `${fmtKm(r.km)} km run`, sub: [r.sec ? `${fmtDur(r.sec)} · ${fmtPace(r.sec / r.km)}/km` : "", r.note].filter(Boolean).join(" · ") })),
+      ...M.allPushups.map((p) => ({ kind: "push", e: p, day: p.day, title: `${fmtNum(p.reps)} ${p.knee ? "knee " : ""}push-ups`, sub: [p.sets.length ? `Sets ${p.sets.join(" · ")}` : "", p.note].filter(Boolean).join(" · ") })),
       ...M.weights.map((w) => ({ kind: "weight", e: w, day: w.day, title: `${fmtNum(w.kg, 1)} kg`, sub: w.note || "" })),
     ].filter((i) => logFilter === "all" || i.kind === logFilter)
       .sort((a, b) => b.day - a.day || (a.e.src === "local" ? -1 : 1));
@@ -457,8 +485,8 @@
       const wk = M.weekOf(i.day);
       return `<div class="log-row">
         <div class="log-ico ${i.kind}">${ico[i.kind]}</div>
-        <div class="log-main"><div class="log-title">${i.title}</div><div class="log-sub">${fmtLong(i.day)}${wk >= 0 && wk < M.weeks ? ` · W${wk + 1}` : ""}${i.sub ? ` · ${esc(i.sub)}` : ""}</div></div>
-        <div class="log-side">${i.e.src === "local" ? `<span class="pill local">this browser</span><button class="del" type="button" aria-label="Delete entry" data-kind="${i.kind}" data-idx="${i.e.idx}">✕</button>` : ""}</div>
+        <div class="log-main"><div class="log-title">${i.title}</div><div class="log-sub">${fmtLong(i.day)}${wk >= 0 && wk < M.weeks ? ` · W${wk + 1}` : i.kind === "weight" ? "" : wk < 0 ? " · before week 1" : " · after week " + M.weeks}${i.sub ? ` · ${esc(i.sub)}` : ""}</div></div>
+        <div class="log-side">${i.e.src === "local" ? `<span class="pill local">${gh ? "not saved yet" : "this browser"}</span>` : ""}${isDemo ? "" : `<button class="del" type="button" aria-label="Delete entry" data-kind="${i.kind}" data-src="${i.e.src}" data-idx="${i.e.idx}">✕</button>`}</div>
       </div>`;
     }).join("") + (items.length > logLimit ? `<button class="btn log-more" type="button" id="log-more">Show more (${items.length - logLimit})</button>` : "");
   }
@@ -467,7 +495,9 @@
     const b = e.target.closest(".del"); if (!b) return;
     const key = { run: "runs", push: "pushups", weight: "weights" }[b.dataset.kind];
     if (!confirm("Delete this entry?")) return;
-    local[key].splice(+b.dataset.idx, 1); saveLocal(); render(); toast("Entry deleted");
+    if (b.dataset.src === "local") local[key].splice(+b.dataset.idx, 1);
+    else local.dels[key].push(baseConfig[key][+b.dataset.idx]);
+    saveLocal(); render(); toast("Entry deleted"); queueSync();
   });
   document.getElementById("log-filter").addEventListener("click", (e) => {
     const b = e.target.closest("button"); if (!b) return;
@@ -486,6 +516,7 @@
     document.querySelectorAll("#add-tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.k === k));
     form.querySelectorAll(".pane").forEach((p) => (p.hidden = p.dataset.pane !== k));
     errEl.textContent = "";
+    dateHint();
   }
   document.getElementById("add-tabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setAddKind(b.dataset.k); });
   document.getElementById("fab").addEventListener("click", () => {
@@ -500,7 +531,22 @@
     document.getElementById("pace-hint").textContent = km > 0 && s ? `Pace ${fmtPace(s / km)} /km` : "";
   };
   form.km.addEventListener("input", paceHint);
+  const dateHint = () => {
+    const el = document.getElementById("date-hint"), d = form.date.value ? toDay(form.date.value) : null;
+    if (d == null || addKind === "weight") { el.textContent = ""; return; }
+    el.textContent = d < M.start ? `Before week 1 (starts ${fmtShort(M.start)}), so it won't count toward your stats.`
+      : d > M.end ? `After week ${M.weeks}, so it won't count toward your stats.` : `Week ${M.weekOf(d) + 1}`;
+  };
+  form.date.addEventListener("input", dateHint);
+  form.date.addEventListener("change", dateHint);
   form.time.addEventListener("input", paceHint);
+  let pushType = store.get("journey36.pushType", "full");
+  const setPushType = (t) => {
+    pushType = t; store.set("journey36.pushType", t);
+    document.querySelectorAll("#push-type button").forEach((b) => b.setAttribute("aria-selected", b.dataset.k === t));
+  };
+  document.getElementById("push-type").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setPushType(b.dataset.k); });
+  setPushType(pushType);
   form.sets.addEventListener("input", () => { const s = parseSets(form.sets.value); if (s.length) form.reps.value = sum(s); });
 
   form.addEventListener("submit", (e) => {
@@ -520,7 +566,7 @@
       const sets = parseSets(form.sets.value);
       const reps = Number(form.reps.value) || sum(sets);
       if (!(reps > 0)) return (errEl.textContent = "Enter how many push-ups.");
-      local.pushups.push(clean({ date, reps: Math.round(reps), sets: sets.length ? sets : undefined, note }));
+      local.pushups.push(clean({ date, reps: Math.round(reps), type: pushType === "knee" ? "knee" : undefined, sets: sets.length ? sets : undefined, note }));
     } else {
       const kg = Number(form.kg.value);
       if (!(kg > 0)) return (errEl.textContent = "Enter your weight in kg.");
@@ -529,25 +575,43 @@
     }
     if (!saveLocal()) { errEl.textContent = "Couldn't save — is private browsing on?"; return; }
     dlg.close("save");
-    render();
-    toast({ run: "Run saved 🏃", push: "Push-ups saved 💪", weight: "Weight saved ⚖️" }[addKind]);
+    render(); queueSync();
+    toast({ run: "Run saved 🏃", push: pushType === "knee" ? "Knee push-ups saved 💪" : "Push-ups saved 💪", weight: "Weight saved ⚖️" }[addKind]);
   });
   const clean = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== ""));
   const saveLocal = () => store.set(LS_KEY, local);
 
-  // ───────── Export data.js ─────────
-  document.getElementById("export-btn").addEventListener("click", () => {
-    const cfg = window.JOURNEY || {};
-    const strip = (arr) => arr.map(({ src, idx, day, sec, avg7, ...rest }) => rest);
-    const merged = {
-      runs: [...(cfg.runs || []), ...local.runs].sort((a, b) => a.date.localeCompare(b.date)),
-      pushups: [...(cfg.pushups || []), ...local.pushups].sort((a, b) => a.date.localeCompare(b.date)),
-      weights: strip(isDemo ? [] : build().weights).map((w) => clean({ date: w.date, kg: w.kg, note: w.note })),
+  // ───────── data.js: merge + write ─────────
+  const byDate = (a, b) => a.date.localeCompare(b.date);
+  const pendingCount = (l = local) => l.runs.length + l.pushups.length + l.weights.length + l.dels.runs.length + l.dels.pushups.length + l.dels.weights.length;
+
+  // apply this browser's changes (adds + deletes) to a data.js config
+  function mergeInto(cfg, l) {
+    const keep = (k) => (cfg[k] || []).filter((e) => e && !l.dels[k].some((d) => same(d, e)));
+    const wmap = new Map();
+    for (const w of [...keep("weights"), ...l.weights]) wmap.set(w.date, w);
+    return {
+      ...cfg,
+      runs: [...keep("runs"), ...l.runs].sort(byDate),
+      pushups: [...keep("pushups"), ...l.pushups].sort(byDate),
+      weights: [...wmap.values()].sort(byDate),
     };
-    const line = (o) => `    ${JSON.stringify(o).replace(/"(\w+)":/g, "$1: ").replace(/,(?=\w+: )/g, ", ")},`;
+  }
+  // after a successful save, drop exactly what was saved (keeps anything added meanwhile)
+  function subtractLocal(saved) {
+    const minus = (arr, gone) => { const g = [...gone]; return arr.filter((e) => { const i = g.findIndex((x) => same(x, e)); if (i < 0) return true; g.splice(i, 1); return false; }); };
+    for (const k of ["runs", "pushups", "weights"]) {
+      local[k] = minus(local[k], saved[k]);
+      local.dels[k] = minus(local.dels[k], saved.dels[k]);
+    }
+  }
+
+  function serialize(cfg) {
     const opt = (k, v, c) => `  ${k}: ${JSON.stringify(v ?? null)},${c ? " " + c : ""}`;
-    const text = `// Your 36-week journey data. Edit by hand or log from the site and export.
-// runs: time is "mm:ss" or "h:mm:ss" · pushups: sets optional · weights in kg · dates YYYY-MM-DD
+    const list = (arr) => (arr || []).map((o) => `    ${JSON.stringify(o)},`).join("\n");
+    return `// Your 36-week journey data. Edit by hand, or log from the site (it saves here automatically).
+// runs: time is "mm:ss" or "h:mm:ss" · pushups: sets optional, "type": "knee" for knee push-ups
+// weights in kg · dates YYYY-MM-DD
 
 window.JOURNEY = {
 ${opt("title", cfg.title || "36 Weeks")}
@@ -558,27 +622,155 @@ ${opt("weeklyGoalKm", cfg.weeklyGoalKm)}
 ${opt("weeklyGoalPushups", cfg.weeklyGoalPushups)}
 
   runs: [
-${merged.runs.map(line).join("\n")}
+${list(cfg.runs)}
   ],
 
   pushups: [
-${merged.pushups.map(line).join("\n")}
+${list(cfg.pushups)}
   ],
 
   weights: [
-${merged.weights.map(line).join("\n")}
+${list(cfg.weights)}
   ],
 };
 `;
+  }
+  function parseDataJs(text) {
+    const sandbox = {};
+    new Function("window", text)(sandbox);
+    if (!sandbox.JOURNEY) throw new Error("data.js doesn't define window.JOURNEY");
+    return sandbox.JOURNEY;
+  }
+
+  // ───────── Autosave to GitHub ─────────
+  const GH_KEY = "journey36.github";
+  let gh = isDemo ? null : store.get(GH_KEY, null); // { repo: "owner/name", branch, token }
+  const syncBtn = document.getElementById("sync-btn");
+  let syncState = "off", syncMsg = "";
+  function setSync(state, msg = "") {
+    syncState = state; syncMsg = msg;
+    const n = pendingCount();
+    const label = { off: n ? `${n} unsaved` : "Autosave", saving: "Saving…", saved: "Saved", error: "Not saved", offline: "Offline" }[state];
+    syncBtn.dataset.state = state;
+    syncBtn.querySelector(".lbl").textContent = label;
+    syncBtn.title = { off: "Set up autosave to GitHub", saving: "Saving to GitHub…", saved: "Everything is saved to GitHub", error: `Couldn't save: ${msg}. Tap to retry or check settings.`, offline: "Offline. Will save when you're back online." }[state];
+    const st = document.getElementById("gh-status");
+    if (st) st.textContent = state === "error" ? `⚠ ${msg}` : state === "saved" ? "✓ Connected. Everything is saved." : state === "saving" ? "Saving…" : "";
+  }
+
+  const b64dec = (b) => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g, "")), (c) => c.charCodeAt(0)));
+  const b64enc = (str) => { let bin = ""; new TextEncoder().encode(str).forEach((x) => (bin += String.fromCharCode(x))); return btoa(bin); };
+  const api = (cfg, path, opts = {}) => fetch(`https://api.github.com/repos/${cfg.repo}/${path}`, {
+    ...opts, cache: "no-store",
+    headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${cfg.token}`, "X-GitHub-Api-Version": "2022-11-28", ...(opts.headers || {}) },
+  });
+  async function fetchRemote(cfg = gh) {
+    const r = await api(cfg, `contents/data.js?ref=${encodeURIComponent(cfg.branch)}`);
+    if (!r.ok) throw new Error(r.status === 401 ? "GitHub rejected the token" : r.status === 404 ? `Can't see data.js in ${cfg.repo} (${cfg.branch}). Check the repo name and that the token has access` : `GitHub error ${r.status}`);
+    const j = await r.json();
+    return { sha: j.sha, cfg: parseDataJs(b64dec(j.content)) };
+  }
+  function commitMessage(l) {
+    const parts = [];
+    const n = (k, one, many) => { if (l[k].length) parts.push(`${l[k].length} ${l[k].length === 1 ? one : many}`); };
+    n("runs", "run", "runs"); n("pushups", "push-up session", "push-up sessions"); n("weights", "weigh-in", "weigh-ins");
+    const dels = l.dels.runs.length + l.dels.pushups.length + l.dels.weights.length;
+    const msg = parts.length ? `Log ${parts.join(", ")}` : "";
+    return [msg, dels ? `remove ${dels} ${dels === 1 ? "entry" : "entries"}` : ""].filter(Boolean).join("; ").replace(/^r/, "R") || "Update data";
+  }
+
+  let syncing = null, syncAgain = false, syncTimer;
+  const queueSync = () => { if (!gh) return setSync("off"); clearTimeout(syncTimer); setSync("saving"); syncTimer = setTimeout(sync, 700); };
+  async function sync() {
+    if (!gh) return setSync("off");
+    if (syncing) { syncAgain = true; return syncing; }
+    syncing = (async () => {
+      try {
+        setSync("saving");
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const { sha, cfg } = await fetchRemote();
+          const snap = JSON.parse(JSON.stringify(local));
+          if (!pendingCount(snap)) { baseConfig = cfg; render(); setSync("saved"); return; }
+          const next = mergeInto(cfg, snap);
+          const r = await api(gh, "contents/data.js", {
+            method: "PUT",
+            body: JSON.stringify({ message: commitMessage(snap), content: b64enc(serialize(next)), sha, branch: gh.branch }),
+          });
+          if (r.status === 409 || r.status === 422) continue; // data.js changed underneath us: refetch and retry
+          if (r.status === 403 || r.status === 404) throw new Error("The token can't write to this repo. Give it Contents: Read and write");
+          if (!r.ok) throw new Error(`GitHub error ${r.status}`);
+          subtractLocal(snap); saveLocal();
+          baseConfig = next; render(); setSync("saved");
+          return;
+        }
+        throw new Error("data.js kept changing. Try again");
+      } catch (err) {
+        setSync(navigator.onLine === false || err instanceof TypeError ? "offline" : "error", err.message);
+      } finally {
+        syncing = null;
+        if (syncAgain) { syncAgain = false; sync(); }
+      }
+    })();
+    return syncing;
+  }
+  addEventListener("online", () => gh && sync());
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && gh && syncState !== "saving") sync(); });
+
+  // settings dialog
+  const ghDlg = document.getElementById("gh-dialog"), ghForm = document.getElementById("gh-form");
+  const guessRepo = () => {
+    const h = location.hostname.match(/^([^.]+)\.github\.io$/i);
+    if (!h) return "";
+    const first = location.pathname.split("/").filter(Boolean)[0];
+    return `${h[1]}/${first && !first.includes(".") ? first : `${h[1]}.github.io`}`;
+  };
+  syncBtn.addEventListener("click", () => {
+    if (isDemo) return toast("Demo mode: open your own journey to set up autosave");
+    ghForm.repo.value = gh ? gh.repo : guessRepo();
+    ghForm.branch.value = gh ? gh.branch : "main";
+    ghForm.token.value = gh ? gh.token : "";
+    document.getElementById("gh-disconnect").hidden = !gh;
+    setSync(syncState, syncMsg);
+    ghDlg.showModal();
+  });
+  ghDlg.addEventListener("click", (e) => { if (e.target === ghDlg) ghDlg.close(); });
+  document.getElementById("gh-disconnect").addEventListener("click", () => {
+    if (!confirm("Stop autosaving from this browser? Your token is removed from this device.")) return;
+    gh = null; try { localStorage.removeItem(GH_KEY); } catch (e) {}
+    baseConfig = window.JOURNEY || {}; render(); setSync("off"); ghDlg.close();
+  });
+  ghForm.addEventListener("submit", async (e) => {
+    if (!e.submitter || e.submitter.value !== "connect") return;
+    e.preventDefault();
+    const cfg = {
+      repo: ghForm.repo.value.trim().replace(/^https?:\/\/github\.com\//, "").replace(/\.git$|\/$/g, ""),
+      branch: ghForm.branch.value.trim() || "main",
+      token: ghForm.token.value.trim(),
+    };
+    const st = document.getElementById("gh-status");
+    if (!/^[\w.-]+\/[\w.-]+$/.test(cfg.repo)) return (st.textContent = "⚠ Repo should look like username/36");
+    if (!cfg.token) return (st.textContent = "⚠ Paste your GitHub token");
+    st.textContent = "Checking…";
+    try {
+      await fetchRemote(cfg);
+      gh = cfg; store.set(GH_KEY, gh);
+      ghDlg.close(); toast("Autosave is on ☁️");
+      render(); sync();
+    } catch (err) { st.textContent = `⚠ ${err instanceof TypeError ? "Couldn't reach GitHub" : err.message}`; }
+  });
+
+  // manual fallback: download data.js with this browser's changes applied
+  document.getElementById("export-btn").addEventListener("click", () => {
+    const text = serialize(mergeInto(baseConfig, local));
     const blob = new Blob([text], { type: "text/javascript" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob); a.download = "data.js";
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    const n = local.runs.length + local.pushups.length + local.weights.length;
-    setTimeout(() => {
-      if (n && confirm(`Downloaded data.js with ${n} new ${n === 1 ? "entry" : "entries"}.\n\nOnce you've replaced data.js in your repo, clear them from this browser?`)) {
-        local = emptyLocal(); saveLocal(); render();
+    const n = pendingCount();
+    if (!gh) setTimeout(() => {
+      if (n && confirm(`Downloaded data.js with ${n} ${n === 1 ? "change" : "changes"}.\n\nOnce you've replaced data.js in your repo, clear them from this browser?`)) {
+        local = emptyLocal(); saveLocal(); render(); setSync("off");
       }
     }, 600);
   });
@@ -619,6 +811,7 @@ ${merged.weights.map(line).join("\n")}
         const s = Math.round(base + wk * 1.6 + rnd() * 5);
         const sets = [s, Math.round(s * 0.9), Math.round(s * 0.8)];
         pushups.push({ date: isoOf(d), reps: sum(sets), sets });
+        if (wk < 6 && rnd() > 0.4) { const k = [15, 12].map((n) => n + Math.round(rnd() * 4)); pushups.push({ date: isoOf(d), reps: sum(k), type: "knee", sets: k }); }
       }
       kg += -0.045 + (rnd() - 0.5) * 0.5;
       if (rnd() > 0.1) weights.push({ date: isoOf(d), kg: Math.round(kg * 10) / 10 });
@@ -629,10 +822,12 @@ ${merged.weights.map(line).join("\n")}
   // ───────── Boot ─────────
   function render() {
     M = build();
+    if (syncBtn && !gh) setSync("off");
     renderHero(); renderKpis(); renderWeek(); renderRunning(); renderPushups(); renderWeight(); renderMap(); renderLog();
   }
   if (isDemo) document.getElementById("demo-banner").hidden = false;
   render();
+  if (gh) sync(); else setSync("off");
 
   let rw, lastW = innerWidth;
   addEventListener("resize", () => {

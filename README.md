@@ -15,16 +15,21 @@ Add `?demo` to the URL to see it filled with sample data.
 
 ## Logging your data
 
-There are two ways:
+Tap **＋** on the site and pick **Run**, **Push-ups** (full or knee) or **Weight**.
 
-- **In `data.js`** (permanent): add lines like
-  ```js
-  runs:    [{ date: "2026-09-22", km: 5.2, time: "29:40", note: "easy" }],
-  pushups: [{ date: "2026-09-22", reps: 60, sets: [20, 20, 20] }],
-  weights: [{ date: "2026-09-22", kg: 86.4 }],
-  ```
-  You can edit it straight from the GitHub app or website.
-- **With the ＋ button on the site** (quick): entries are saved in that browser right away. To make them permanent, tap **Export data.js**, then replace `data.js` in the repo with the downloaded file. The site offers to clear its local copy once you've done that.
+**Autosave (recommended):** tap **Autosave** at the top right and connect a GitHub token. The dialog walks you through it: a fine-grained token for just this repo, with *Contents: Read and write*. From then on, every entry you add or delete is committed straight to `data.js`. The site redeploys itself, and every connected device loads the latest data. Connect each device (phone, laptop) once. Entries made while you're offline are kept and saved when you're back online.
+
+If autosave isn't set up, entries are still saved in that browser. The autosave dialog also has a **download data.js** link if you'd rather commit the file yourself.
+
+You can also edit `data.js` by hand:
+```js
+runs:    [{ date: "2026-09-22", km: 5.2, time: "29:40", note: "easy" }],
+pushups: [{ date: "2026-09-22", reps: 60, sets: [20, 20, 20] },
+          { date: "2026-09-22", reps: 30, type: "knee" }],   // knee push-ups
+weights: [{ date: "2026-09-22", kg: 86.4 }],
+```
+
+Only entries dated inside the 36 weeks count toward stats and charts. Anything before `startDate` still shows in the activity log, labelled "before week 1".
 
 ## iPhone
 
