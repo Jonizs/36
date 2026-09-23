@@ -1,0 +1,12 @@
+# Jekyll config for GitHub Pages.
+# The site itself is plain HTML/CSS/JS; Jekyll just copies it to the published site.
+title: 36 Weeks
+description: A 36-week running, push-up and weight journey.
+baseurl: ""   # leave empty; the site uses relative links so it works at /<repo>/ too
+
+exclude:
+  - README.md
+  - Gemfile
+  - Gemfile.lock
+  - vendor
+  - .github

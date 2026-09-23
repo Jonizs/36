@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e0f12" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="36 Weeks">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <title>36 Weeks</title>
+  <meta name="description" content="A 36-week running, push-up and weight journey.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    try { const t = localStorage.getItem("journey36.theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <div id="demo-banner" class="banner" hidden>
+    You're viewing <strong>demo data</strong>. <a href="./">Back to my journey →</a>
+  </div>
+
+  <header class="top">
+    <div>
+      <h1 id="title">36 Weeks</h1>
+      <p class="sub">Running · Push-ups · Weight</p>
+    </div>
+    <div class="top-actions">
+      <button id="export-btn" class="btn ghost" type="button" title="Download an updated data.js with everything logged in this browser">⤓ <span class="lbl">Export</span></button>
+      <button id="theme-btn" class="btn ghost icon" type="button" aria-label="Toggle theme">◐</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero -->
+    <section class="card hero">
+      <div class="hero-main">
+        <div class="eyebrow" id="hero-eyebrow">Current week</div>
+        <div class="hero-week"><span id="hero-week">–</span><span class="of" id="hero-of">/ 36</span></div>
+        <div class="hero-dates" id="hero-dates"></div>
+      </div>
+      <div class="hero-side">
+        <div class="hero-meta">
+          <div><span class="k">Day</span><span class="v" id="hero-day">–</span></div>
+          <div><span class="k">Days left</span><span class="v" id="hero-left">–</span></div>
+          <div><span class="k">Complete</span><span class="v" id="hero-pct">–</span></div>
+        </div>
+        <div class="weeks-bar" id="weeks-bar" aria-hidden="true"></div>
+      </div>
+    </section>
+
+    <!-- KPIs -->
+    <section class="kpis" id="kpis"></section>
+
+    <!-- This week -->
+    <section class="card">
+      <div class="card-head">
+        <h2>This week</h2>
+        <div class="week-totals" id="week-totals"></div>
+      </div>
+      <div class="week-days" id="week-days"></div>
+    </section>
+
+    <!-- Running -->
+    <section class="card">
+      <div class="card-head">
+        <h2><span class="dot run"></span>Weekly distance</h2>
+        <span class="muted small" id="run-caption"></span>
+      </div>
+      <div class="chart" id="run-chart"></div>
+      <div class="records" id="run-records"></div>
+    </section>
+
+    <!-- Push-ups -->
+    <section class="card">
+      <div class="card-head">
+        <h2><span class="dot push"></span>Weekly push-ups</h2>
+        <span class="muted small" id="push-caption"></span>
+      </div>
+      <div class="chart" id="push-chart"></div>
+      <div class="records" id="push-records"></div>
+    </section>
+
+    <!-- Weight -->
+    <section class="card">
+      <div class="card-head">
+        <h2><span class="dot weight"></span>Weight</h2>
+        <div class="legend">
+          <span><i class="lg-dot"></i>Daily</span>
+          <span><i class="lg-line"></i>7-day average</span>
+          <span id="lg-goal" hidden><i class="lg-dash"></i>Goal</span>
+        </div>
+      </div>
+      <div class="chart" id="weight-chart"></div>
+    </section>
+
+    <!-- Journey map -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Journey map</h2>
+        <div class="seg" role="tablist" id="map-toggle">
+          <button type="button" data-k="run" aria-selected="true">Running</button>
+          <button type="button" data-k="push" aria-selected="false">Push-ups</button>
+        </div>
+      </div>
+      <div class="map" id="map"></div>
+      <div class="map-scale" id="map-scale"></div>
+    </section>
+
+    <!-- Log -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Activity log</h2>
+        <div class="seg" id="log-filter">
+          <button type="button" data-k="all" aria-selected="true">All</button>
+          <button type="button" data-k="run" aria-selected="false">Runs</button>
+          <button type="button" data-k="push" aria-selected="false">Push-ups</button>
+          <button type="button" data-k="weight" aria-selected="false">Weight</button>
+        </div>
+      </div>
+      <div class="log" id="log"></div>
+    </section>
+
+    <footer class="foot">
+      <span>Entries marked <span class="pill local">this browser</span> live only here. Use <strong>Export data.js</strong> and commit the file to keep them.</span>
+      <a href="?demo">See demo data</a>
+    </footer>
+  </main>
+
+  <button id="fab" class="fab" type="button" aria-label="Add entry">+</button>
+
+  <dialog id="add-dialog" class="dialog">
+    <form method="dialog" id="add-form">
+      <div class="dialog-head">
+        <h3>Add entry</h3>
+        <button class="btn ghost icon" value="cancel" aria-label="Close" formnovalidate>✕</button>
+      </div>
+      <div class="seg wide" id="add-tabs">
+        <button type="button" data-k="run" aria-selected="true">🏃 Run</button>
+        <button type="button" data-k="push" aria-selected="false">💪 Push-ups</button>
+        <button type="button" data-k="weight" aria-selected="false">⚖️ Weight</button>
+      </div>
+
+      <label class="field"><span>Date</span><input type="date" name="date" required></label>
+
+      <div class="pane" data-pane="run">
+        <div class="row2">
+          <label class="field"><span>Distance (km)</span><input type="number" name="km" step="0.01" min="0" inputmode="decimal" placeholder="5.0"></label>
+          <label class="field"><span>Time</span><input type="text" name="time" inputmode="decimal" autocomplete="off" placeholder="28:30"></label>
+        </div>
+        <div class="hint" id="pace-hint"></div>
+      </div>
+
+      <div class="pane" data-pane="push" hidden>
+        <div class="row2">
+          <label class="field"><span>Total reps</span><input type="number" name="reps" min="1" step="1" inputmode="numeric" placeholder="60"></label>
+          <label class="field"><span>Sets (optional)</span><input type="text" name="sets" placeholder="20, 20, 20"></label>
+        </div>
+        <div class="hint">Enter sets and the total fills itself in.</div>
+      </div>
+
+      <div class="pane" data-pane="weight" hidden>
+        <label class="field"><span>Weight (kg)</span><input type="number" name="kg" step="0.1" min="0" inputmode="decimal" placeholder="82.4"></label>
+      </div>
+
+      <label class="field note-field"><span>Note (optional)</span><input type="text" name="note" maxlength="140" placeholder="How did it feel?"></label>
+
+      <div class="form-error" id="form-error" role="alert"></div>
+      <div class="dialog-actions">
+        <button class="btn ghost" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn primary" id="save-btn" value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="tooltip" class="tooltip" role="status" hidden></div>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

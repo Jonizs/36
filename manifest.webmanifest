@@ -1,0 +1,11 @@
+{
+  "name": "36 Weeks",
+  "short_name": "36 Weeks",
+  "description": "A 36-week running, push-up and weight journey.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0e0f12",
+  "theme_color": "#0e0f12",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
